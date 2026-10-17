@@ -52,8 +52,9 @@ jobs:
             -d KALLSYMS_ALL -d KPROBES -d BT -d MTK_COMBO_BT -d MTK_COMBO_COMM \
             -d CRYPTO_ZSTD -d IOMONITOR -d SECURITY_SELINUX_BOOTPARAM \
             -d SECURITY_SELINUX_DEVELOP -d SECURITY_SELINUX_DISABLE \
+            -d CRYPTO_ECDH -d MODULE_FORCE_LOAD -d MODULE_FORCE_UNLOAD \
             -d LOCALVERSION_AUTO --set-str LOCALVERSION "" \
-            -e DEBUG_INFO -e DEBUG_INFO_DWARF4
+            -e DEBUG_INFO
           make -s -j"$(nproc --all)" O=out ARCH=arm64 olddefconfig
           grep -E 'LTO|CFI|DEBUG_INFO|MODULE_SIG' out/.config
 
