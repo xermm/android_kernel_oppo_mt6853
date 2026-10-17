@@ -6,7 +6,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 180
+    timeout-minutes: 240
 
     steps:
       - uses: actions/checkout@v4
@@ -35,12 +35,22 @@ jobs:
           cd "$GITHUB_WORKSPACE/toolchains"
           git clone -q --depth=1 https://github.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-6443078 -b 10.0 clang-aosp
 
-      - name: Configure kernel
+      - name: Configure kernel to match device
         run: |
           cd "$GITHUB_WORKSPACE/kernel-4.14"
           make -s -j"$(nproc --all)" O=out ARCH=arm64 OPPO-K7x_defconfig
-          ./scripts/config --file out/.config -e DEBUG_INFO -e DEBUG_INFO_DWARF4
+          ./scripts/config --file out/.config \
+            -e LTO -e LTO_CLANG -e THINLTO -e CFI_CLANG -e CFI_CLANG_SHADOW \
+            -e MODULE_SIG -e MODULE_SIG_ALL -e MODULE_SIG_FORCE \
+            --set-val MODULE_SIG_HASH sha512 \
+            -e OPLUS_ION_BOOSTPOOL \
+            -d KALLSYMS_ALL -d KPROBES -d BT -d MTK_COMBO_BT -d MTK_COMBO_COMM \
+            -d CRYPTO_ZSTD -d IOMONITOR -d SECURITY_SELINUX_BOOTPARAM \
+            -d SECURITY_SELINUX_DEVELOP -d SECURITY_SELINUX_DISABLE \
+            -d LOCALVERSION_AUTO --set-str LOCALVERSION "" \
+            -e DEBUG_INFO -e DEBUG_INFO_DWARF4
           make -s -j"$(nproc --all)" O=out ARCH=arm64 olddefconfig
+          grep -E 'LTO|CFI|DEBUG_INFO|MODULE_SIG' out/.config
 
       - name: Build kernel
         run: |
@@ -48,11 +58,12 @@ jobs:
           export PATH="$GITHUB_WORKSPACE/toolchains/clang-aosp/bin:$GITHUB_WORKSPACE/toolchains/gcc64/bin:$GITHUB_WORKSPACE/toolchains/gcc32/bin:$PATH"
           export KBUILD_BUILD_HOST=gmail.com
           export KBUILD_BUILD_USER=fangkuaixiaoqiao
-          make -j"$(nproc --all)" CC="ccache clang" O=out ARCH=arm64 \
+          make -j"$(nproc --all)" CC=clang O=out ARCH=arm64 \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-android- \
             CROSS_COMPILE_ARM32=arm-linux-androideabi- \
-            LD=ld.lld
+            LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump STRIP=llvm-strip
 
       - name: Dump symbols and struct offsets
         run: |
@@ -65,13 +76,13 @@ jobs:
           pahole -C task_group out/vmlinux > out/task_group.txt || true
           grep -E ' (init_task|init_cred|selinux_enforcing|root_task_group|_stext|_text)$' out/System.map > out/key_symbols.txt || true
           cat out/key_symbols.txt
-          wc -l out/task_struct.txt out/rt_mutex_waiter.txt out/cred.txt
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: perm00-offsets
+          name: perm00-offsets-lto
           path: |
+            kernel-4.14/out/.config
             kernel-4.14/out/task_struct.txt
             kernel-4.14/out/rt_mutex_waiter.txt
             kernel-4.14/out/cred.txt
