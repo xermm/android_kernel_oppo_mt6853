@@ -42,7 +42,7 @@ jobs:
           ./scripts/config --file out/.config \
             -e LTO -e LTO_CLANG -e THINLTO -e CFI_CLANG -e CFI_CLANG_SHADOW \
             -e MODULE_SIG -e MODULE_SIG_ALL -e MODULE_SIG_FORCE \
-            --set-val MODULE_SIG_HASH sha512 \
+            -e MODULE_SIG_SHA512 -d MODULE_SIG_SHA1 \
             -e OPLUS_ION_BOOSTPOOL \
             -d KALLSYMS_ALL -d KPROBES -d BT -d MTK_COMBO_BT -d MTK_COMBO_COMM \
             -d CRYPTO_ZSTD -d IOMONITOR -d SECURITY_SELINUX_BOOTPARAM \
@@ -74,6 +74,13 @@ jobs:
           pahole -C cred out/vmlinux > out/cred.txt || true
           pahole -C rt_mutex out/vmlinux > out/rt_mutex.txt || true
           pahole -C task_group out/vmlinux > out/task_group.txt || true
+          pahole -C selinux_state out/vmlinux > out/selinux_state.txt || true
+          pahole -C mm_struct out/vmlinux > out/mm_struct.txt || true
+          pahole -C pipe_buffer out/vmlinux > out/pipe_buffer.txt || true
+          pahole -C page out/vmlinux > out/page.txt || true
+          pahole -C file_operations out/vmlinux > out/file_operations.txt || true
+          objcopy --strip-debug out/vmlinux out/vmlinux.stripped || true
+          ls -lh out/vmlinux.stripped || true
           grep -E ' (init_task|init_cred|selinux_enforcing|root_task_group|_stext|_text)$' out/System.map > out/key_symbols.txt || true
           cat out/key_symbols.txt
 
@@ -88,6 +95,12 @@ jobs:
             kernel-4.14/out/cred.txt
             kernel-4.14/out/rt_mutex.txt
             kernel-4.14/out/task_group.txt
+            kernel-4.14/out/selinux_state.txt
+            kernel-4.14/out/mm_struct.txt
+            kernel-4.14/out/pipe_buffer.txt
+            kernel-4.14/out/page.txt
+            kernel-4.14/out/file_operations.txt
+            kernel-4.14/out/vmlinux.stripped
             kernel-4.14/out/key_symbols.txt
             kernel-4.14/out/System.map
             kernel-4.14/out/arch/arm64/boot/Image.gz-dtb
