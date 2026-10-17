@@ -1,96 +1,78 @@
-name: 构建PERM00_Android12.1内核-支持KernelSU
-
+name: Build PERM00 kernel for offset analysis
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
+    timeout-minutes: 180
 
     steps:
-    - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo -E apt-get -y -qq install git make bc bison ccache openssl dos2unix zip kmod cpio flex libelf-dev curl libssl-dev libtfm-dev wget device-tree-compiler ca-certificates python3 python2 binutils binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi dwarves
 
+      - name: Download GCC toolchain
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/toolchains"
+          cd "$GITHUB_WORKSPACE/toolchains"
+          mkdir -p gcc64 gcc32
+          wget -q -O gcc-aarch64.tar.gz https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/tags/android-12.1.0_r27.tar.gz
+          tar -C gcc64/ -zxf gcc-aarch64.tar.gz
+          wget -q -O gcc-arm.tar.gz https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/+archive/refs/tags/android-12.1.0_r27.tar.gz
+          tar -C gcc32/ -zxf gcc-arm.tar.gz
 
-    - name: 构建编译内核环境
-      run: |
-        sudo apt-get update
-        sudo -E apt-get -y -qq install git make bc bison ccache openssl dos2unix zip kmod cpio flex libelf-dev curl libssl-dev libtfm-dev wget device-tree-compiler ca-certificates python3 python2 binutils binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi
-        mkdir -p $GITHUB_WORKSPACE/kernel_workspace
+      - name: Download Clang toolchain
+        run: |
+          cd "$GITHUB_WORKSPACE/toolchains"
+          git clone -q --depth=1 https://github.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-6443078 -b 10.0 clang-aosp
 
+      - name: Configure kernel
+        run: |
+          cd "$GITHUB_WORKSPACE/kernel-4.14"
+          make -s -j"$(nproc --all)" O=out ARCH=arm64 OPPO-K7x_defconfig
+          ./scripts/config --file out/.config -e DEBUG_INFO -e DEBUG_INFO_DWARF4
+          make -s -j"$(nproc --all)" O=out ARCH=arm64 olddefconfig
 
-    - name: 下载 Gcc编译器
-      run: |
-        cd $GITHUB_WORKSPACE/kernel_workspace
-        
-        mkdir gcc64
-        wget -O gcc-aarch64.tar.gz https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/tags/android-12.1.0_r27.tar.gz
-        tar -C gcc64/ -zxvf gcc-aarch64.tar.gz
-    
-        mkdir gcc32
-        wget -O gcc-arm.tar.gz https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/+archive/refs/tags/android-12.1.0_r27.tar.gz
-        tar -C gcc32/ -zxvf gcc-arm.tar.gz
-    
-    - name: 下载Clang编译器
-      run: |
-        cd $GITHUB_WORKSPACE/kernel_workspace
-        mkdir clang-aosp
-        git clone -q --depth=1 https://github.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-6443078 -b 10.0 clang-aosp
+      - name: Build kernel
+        run: |
+          cd "$GITHUB_WORKSPACE/kernel-4.14"
+          export PATH="$GITHUB_WORKSPACE/toolchains/clang-aosp/bin:$GITHUB_WORKSPACE/toolchains/gcc64/bin:$GITHUB_WORKSPACE/toolchains/gcc32/bin:$PATH"
+          export KBUILD_BUILD_HOST=gmail.com
+          export KBUILD_BUILD_USER=fangkuaixiaoqiao
+          make -j"$(nproc --all)" CC="ccache clang" O=out ARCH=arm64 \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-android- \
+            CROSS_COMPILE_ARM32=arm-linux-androideabi- \
+            LD=ld.lld
 
+      - name: Dump symbols and struct offsets
+        run: |
+          cd "$GITHUB_WORKSPACE/kernel-4.14"
+          ls -lh out/vmlinux out/System.map
+          pahole -C task_struct out/vmlinux > out/task_struct.txt || true
+          pahole -C rt_mutex_waiter out/vmlinux > out/rt_mutex_waiter.txt || true
+          pahole -C cred out/vmlinux > out/cred.txt || true
+          pahole -C rt_mutex out/vmlinux > out/rt_mutex.txt || true
+          pahole -C task_group out/vmlinux > out/task_group.txt || true
+          grep -E ' (init_task|init_cred|selinux_enforcing|root_task_group|_stext|_text)$' out/System.map > out/key_symbols.txt || true
+          cat out/key_symbols.txt
+          wc -l out/task_struct.txt out/rt_mutex_waiter.txt out/cred.txt
 
-    - name: 下载内核源码
-      run: |
-        cd $GITHUB_WORKSPACE/kernel_workspace
-        git clone --depth=1 https://github.com/fangkuaixiaoqiao/android_kernel_oppo_mt6853 -b oppo/mt6853_s_12.1_k7x android-kernel
-        cd android-kernel/kernel-4.14
-
-
-    - name: 下载KernelSU源码
-      run: |
-        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel/kernel-4.14
-        curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v0.9.5
-
-
-    - name: 设置ccache缓存
-      uses: hendrikmuhs/ccache-action@v1.2
-      with:
-        key: build-kernel-mido-kernel
-        max-size: 2G
-
-
-    - name: 开始编译内核
-      run: |
-        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel/kernel-4.14
-        export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/bin:$GITHUB_WORKSPACE/kernel_workspace/gcc64/bin:$GITHUB_WORKSPACE/kernel_workspace/gcc32/bin:$PATH
-        export KBUILD_BUILD_HOST=gmail.com
-        export KBUILD_BUILD_USER=fangkuaixiaoqiao
-        make -s -j$(nproc --all) O=out ARCH=arm64 OPPO-K7x_defconfig
-        make -j$(nproc --all) CC="ccache clang" O=out ARCH=arm64 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi- LD=ld.lld
-
-
-    - name: 制作Anykernel3卡刷包
-      run: |
-        cd $GITHUB_WORKSPACE/kernel_workspace
-        git clone https://github.com/osm0sis/AnyKernel3
-        sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
-        sed -i 's!block=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!block=auto;!g' AnyKernel3/anykernel.sh
-        sed -i 's/is_slot_device=0;/is_slot_device=auto;/g' AnyKernel3/anykernel.sh
-        cp android-kernel/kernel-4.14/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
-        rm -rf AnyKernel3/.git* AnyKernel3/README.md
-
-
-
-    - name: 上传 Anykernel3
-      uses: actions/upload-artifact@v3
-      with:
-        name: perm00内核-卡刷包
-        path: kernel_workspace/AnyKernel3/*
-
-
-    - name: 上传编译内核
-      uses: actions/upload-artifact@v4
-      with:
-        name: perm00内核
-        path: kernel_workspace/android-kernel/kernel-4.14/out/arch/arm64/boot/Image.gz-dtb
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: perm00-offsets
+          path: |
+            kernel-4.14/out/task_struct.txt
+            kernel-4.14/out/rt_mutex_waiter.txt
+            kernel-4.14/out/cred.txt
+            kernel-4.14/out/rt_mutex.txt
+            kernel-4.14/out/task_group.txt
+            kernel-4.14/out/key_symbols.txt
+            kernel-4.14/out/System.map
+            kernel-4.14/out/arch/arm64/boot/Image.gz-dtb
